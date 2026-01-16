@@ -9,13 +9,27 @@ MSG1 DB 0AH,0DH,'_____ Exam Hall Attendance System _____',0AH,0DH,'$'
 ;Menu
 MENU_MSG DB 0AH,0DH,'1. Student Sign In',0AH,0DH,'2. View Attendance by Room',0AH,0DH,'3. View Summary by Course',0AH,0DH,'4. Delete Wrong Entry',0AH,0DH,'5. Exit',0AH,0DH,'Enter your choice: $'
 
-;Messages
+;Messages for Entry
 PROMPT_COURSE DB 0AH,0DH,'Select Course (1-5): $'
 PROMPT_SECTION DB 0AH,0DH,'Select Section (1-5): $'
 PROMPT_ROOM DB 0AH,0DH,'Select Room (1-10): $'
 PROMPT_ID DB 0AH,0DH,'Enter Student ID: $'
-CONFIRM_MSG DB 0AH,0DH,'Operation Completed! $' 
-SIGN_CONFIRM_MSG DB 0AH,0DH,'Signature Completed! $'
+PROMPT_BATCH DB 0AH,0DH, 'Enter Your Batch: $'
+CONFIRM_MSG DB 0AH,0DH,0AH,0DH,'Operation Completed!',0AH,0DH,' $' 
+SIGN_CONFIRM_MSG DB 0AH,0DH,'Signature Completed!',0AH,0DH,' $' 
+ID_MSG DB 0AH, 0DH,'Student ID: $'
+DUPLICATE_MSG DB 0DH,0AH,'Error: Same ID and Batch already exists!$'
+;Messeges for view by room
+PROMT_ATTEDENCE DB 0AH, 0DH, 0AH,0DH,'ROOM ATTENDENCE : $'  
+PRESENT_MSG DB 0AH, 0DH,'Student Present: $'
+ABSENT_MSG DB 0AH, 0DH, 'Student Absent: $'
+EMPTY_ROOM_MSG DB 0AH, 0DH , 'No student signed in this room.$'
+TOTAL_MSG DB 0AH,0DH,0AH,0DH,'Total Assigned: 30 $'
+
+; Variables for Multi Digit
+Thirty DB 30
+TENS DB 0
+ONES DB 0
  
 ;Arrays (For 100 students)
 STUDENT_ID DB 100 DUP(0)
@@ -23,7 +37,8 @@ ROOM_NO DB 100 DUP(0)
 COURSE_CODE DB 100 DUP(0)
 SECTION_CODE    DB 100 DUP(0)
 SIGNED_IN_ROOM DB 10 DUP(0)
-TOTAL_SIGNED_IN DB 0 
+TOTAL_SIGNED_IN DB 0
+STUDENT_BATCH DB 100 DUP(0) 
 
 ;User selections
 USER_COURSE DB 0
@@ -45,6 +60,9 @@ ID_INPUT  DB 4 DUP(0) ; actual input storage
 ROOM_BUFFER DB 3       ; 2 digits + length byte
 ROOM_INPUT  DB 3 DUP(0)
 
+;Batch storage for 1 to 100 
+BATCH_BUFFER DB 3  ; 2 digit + length byte
+BATCH_INPUT DB DUP(0)
 
 .code
 main PROC
@@ -110,7 +128,7 @@ PRINT_COURSE_MENU:
     MOV AL, TOTAL_SIGNED_IN        ; load the byte value
     MOV AH, 0                    ; clear high byte
     MOV SI, AX                 ; now SI = TOTAL_SIGNED_IN
-    MOV [COURSE_CODE + SI], AL
+    MOV [COURSE_CODE + SI], BL
 
 
 ;___Display Sections____
@@ -205,18 +223,114 @@ STORE_ROOM:
    MOV AL, TOTAL_SIGNED_IN
    MOV AH,0
    MOV SI, AX        ;SI=index for arrays
-
+   MOV BX, 3
+   MUL BX
+   MOV SI, AX
+   
 ;store first digit
-   MOV AL, ID_BUFFER+1
+   MOV AL, ID_BUFFER+2
    MOV [STUDENT_ID + SI], AL
 
 ;store second digit
-   MOV AL, ID_BUFFER+2
+   MOV AL, ID_BUFFER+3
    MOV [STUDENT_ID + SI + 1], AL
 
 ;store third digit
-   MOV AL, ID_BUFFER+3
-   MOV [STUDENT_ID + SI + 2], AL
+   MOV AL, ID_BUFFER+4
+   MOV [STUDENT_ID + SI + 2], AL    
+   
+;-------BATCH INPUT START ---------
+
+   LEA DX,PROMPT_BATCH
+   MOV AH,09h
+   INT 21h 
+;read up to 3-digit batch   
+   LEA DX, BATCH_BUFFER
+   MOV AH, 0Ah
+   INT 21h
+   
+;store input in STUDENT_Batch array as string
+  MOV CL, BATCH_BUFFER+1
+  CMP CL, 2  
+
+; first digit
+    MOV AL, BATCH_BUFFER+2
+    SUB AL, 30h
+    CMP AL, 0
+    
+    
+  
+    MOV BL, AL
+    MOV BH, 10
+    MUL BH            ; AL = first_digit * 10
+
+    ; second digit
+    MOV BL, BATCH_BUFFER+3
+    SUB BL, 30h
+    CMP BL, 0
+     
+
+    ADD AL, BL        ; AL = batch number (00–99)
+
+    ; store batch
+    MOV AH, 0
+    MOV Al, TOTAL_SIGNED_IN 
+    MOV [STUDENT_BATCH + SI], AL 
+    
+ ; ===== DUPLICATE CHECK START =====
+XOR SI, SI                 ; SI = 0
+
+CHECK_DUP:
+    MOV AL, TOTAL_SIGNED_IN
+    MOV AH, 0
+    CMP SI, AX
+
+    JGE NO_DUPLICATE
+
+    ; old ID offset = SI * 3
+    MOV AX, SI
+    MOV BL, 3
+    MUL BL
+    MOV DI, AX
+
+    ; new ID offset = TOTAL_SIGNED_IN * 3
+    MOV AL, TOTAL_SIGNED_IN
+    MOV AH, 0
+    MUL BL
+    MOV BX, AX
+
+    ; compare ID (3 digits)
+    MOV AL, [STUDENT_ID + DI]
+    CMP AL, [STUDENT_ID + BX]
+    JNE NEXT
+
+    MOV AL, [STUDENT_ID + DI + 1]
+    CMP AL, [STUDENT_ID + BX + 1]
+    JNE NEXT
+
+    MOV AL, [STUDENT_ID + DI + 2]
+    CMP AL, [STUDENT_ID + BX + 2]
+    JNE NEXT
+
+  ; compare Batch
+    MOV AL, [STUDENT_BATCH + SI]   ; old batch
+    MOV BL, TOTAL_SIGNED_IN        ; new index
+    CMP AL, [STUDENT_BATCH + BX]
+    JE DUPLICATE_FOUND
+
+NEXT:
+    INC SI
+    JMP CHECK_DUP
+
+DUPLICATE_FOUND:
+    LEA DX, DUPLICATE_MSG
+    MOV AH, 09h
+    INT 21h
+    JMP MAIN_MENU
+
+NO_DUPLICATE:
+; ===== DUPLICATE CHECK END =====
+    
     
 
     INC TOTAL_SIGNED_IN
@@ -248,6 +362,181 @@ STORE_ROOM:
 ;_____ VIEW room part ______
 VIEW_ROOM:
     ;View Attendance by Room logic here 
+    
+; Show room list
+    LEA DX, ROOM_LIST
+    MOV AH, 09h
+    INT 21h
+
+    ; Ask room
+    LEA DX, PROMPT_ROOM
+    MOV AH, 09h
+    INT 21h
+
+    LEA DX, ROOM_BUFFER        ;buffer input(1-10)
+    MOV AH, 0Ah
+    INT 21h
+
+    ; Convert room (1-10)
+    MOV CL, ROOM_BUFFER+1
+    CMP CL, 1
+    JE VR_ONE             
+    CMP CL, 2
+    JE VR_TWO            
+    JMP MAIN_MENU
+
+VR_ONE:
+    MOV AL, ROOM_BUFFER+2   ;single digit room(1-9)
+    SUB AL, 30h
+    MOV USER_ROOM, AL
+    JMP VR_START
+
+VR_TWO:
+    MOV AL, ROOM_BUFFER+2     ;two digit room just 10
+    SUB AL, 30h
+    CMP AL, 1
+    
+    MOV AL, ROOM_BUFFER+3
+    SUB AL, 30h
+    CMP AL, 0
+   
+    MOV USER_ROOM, 10
+
+VR_START:
+    ; Header
+    LEA DX, PROMT_ATTEDENCE
+    MOV AH, 09h
+    INT 21h
+
+    XOR SI, SI          ;  array index
+    XOR CX, CX          ; present student  count
+
+VR_LOOP:
+    MOV AL, TOTAL_SIGNED_IN    
+    MOV AH, 0
+    CMP SI, AX
+    JGE VR_DONE
+
+    MOV AL, [ROOM_NO + SI]     ;
+    CMP AL, USER_ROOM
+    JNE VR_NEXT
+
+    ; New line
+    MOV DL, 0Dh
+    MOV AH, 02h
+    INT 21h
+    MOV DL, 0Ah
+    INT 21h
+
+    ; Print ID 3digit
+    MOV BX, SI
+    ADD BX, SI
+    ADD BX, SI 
+    
+    LEA DX, ID_MSG
+    MOV AH, 09h
+    INT 21h
+    
+    MOV DL, [STUDENT_ID + BX]
+    MOV AH, 02h
+    INT 21h
+    MOV DL, [STUDENT_ID + BX + 1]
+    INT 21h
+    MOV DL, [STUDENT_ID + BX + 2]
+    INT 21h
+
+
+    INC CX
+
+VR_NEXT:
+    INC SI
+    JMP VR_LOOP
+
+VR_DONE:
+                                    
+    CMP CX, 0        ; If empty room
+    JNE VR_SUMMARY
+
+    LEA DX, EMPTY_ROOM_MSG
+    MOV AH, 09h
+    INT 21h
+    
+
+VR_SUMMARY:
+    ; Get total assigned
+    MOV AL, USER_ROOM
+    DEC AL
+    MOV AH, 0
+    MOV SI, AX
+    MOV AL, [30 + SI]
+    MOV BL, AL          ; BL = assigned
+
+    ; Print total assigned
+    LEA DX, TOTAL_MSG
+    MOV AH, 09h
+    INT 21h
+    
+
+    ; Print present
+    LEA DX, PRESENT_MSG
+    MOV AH, 09h
+    INT 21h 
+    
+    ;print total presented student count
+    MOV AL, CL  
+    XOR AH, AH
+    MOV BL, 10
+    DIV BL 
+ 
+ 
+ ;multi-digit print
+    
+    MOV TENS, AL    ;AL store quotient  
+    MOV ONES , AH         ;AH store remainder 
+    
+    CMP TENS,0
+    JE ADD_ONE 
+    MOV DL, TENS 
+    ADD DL, 30H       
+    MOV AH,2 
+    INT 21h
+    
+ADD_ONE:
+    MOV DL, ONES 
+    ADD DL, 30H       ; print for remainder 
+    MOV AH,2 
+    INT 21h
+    
+    
+; Print absent
+    LEA DX, ABSENT_MSG
+    MOV AH, 09h
+    INT 21h 
+    
+;print absent student count
+    MOV AL, Thirty             ;30- present studnet 
+    SUB AL, CL
+                         
+    XOR AH,AH
+    MOV BL, 10
+    DIV BL
+    
+    MOV TENS, AL 
+    MOV ONES , AH 
+    
+    CMP TENS,0
+    JE ABS_ONE 
+    MOV DL, TENS 
+    ADD DL, 30H       
+    MOV AH,2 
+    INT 21h
+    
+ABS_ONE:
+    MOV DL, ONES 
+    ADD DL, 30H       
+    MOV AH,2 
+    INT 21h    
+         
     
     LEA DX,CONFIRM_MSG
     MOV AH,09h

@@ -25,6 +25,17 @@ PRESENT_MSG DB 0AH, 0DH,'Student Present: $'
 ABSENT_MSG DB 0AH, 0DH, 'Student Absent: $'
 EMPTY_ROOM_MSG DB 0AH, 0DH , 'No student signed in this room.$'
 TOTAL_MSG DB 0AH,0DH,0AH,0DH,'Total Assigned: 30 $'
+NOT_FOUND_MSG DB 0DH,0AH,'Error: Student record not found!$'
+
+CSE241_STR DB 0DH,0AH,'CSE241','$'
+CSE281_STR DB 0DH,0AH,'CSE281','$'
+CSE364_STR DB 0DH,0AH,'CSE364','$'
+EEE341_STR DB 0DH,0AH,'EEE341','$'
+EEE381_STR DB 0DH,0AH,'EEE381','$'
+
+
+SECTION_LABEL DB 0DH,0AH, 'Section: $'
+DELETE_CONFIRM_MSG DB 0AH,0DH,'Are you sure? (1: Yes / 2: No): $'
 
 ; Variables for Multi Digit
 Thirty DB 30
@@ -358,6 +369,12 @@ NO_DUPLICATE:
     INT 21h
     JMP MAIN_MENU
 
+;----- Confirmation -----
+LEA DX, SIGN_CONFIRM_MSG
+MOV AH,09h
+INT 21h
+JMP MAIN_MENU
+
 
 ;_____ VIEW room part ______
 VIEW_ROOM:
@@ -546,6 +563,118 @@ ABS_ONE:
 ;_______ View Course summary _______
 VIEW_COURSE:
     ;View Summary by Course logic
+
+    LEA DX, COURSE_LIST
+    MOV AH, 09h
+    INT 21h
+
+    ; Prompt course
+    LEA DX, PROMPT_COURSE
+    MOV AH, 09h
+    INT 21h
+
+    ; Input course choice
+    MOV AH, 01h
+    INT 21h
+    SUB AL, 30h
+    MOV USER_COURSE, AL
+
+    ; Clear room counters (Room 1–10)
+    XOR SI, SI
+CLEAR_ROOM_COUNT:
+    MOV SIGNED_IN_ROOM[SI], 0
+    INC SI
+    CMP SI, 10
+    JL CLEAR_ROOM_COUNT
+
+    ; Initialize index and total present counter
+    XOR SI, SI
+    XOR BX, BX              ; BX = total present count
+
+COURSE_LOOP:
+    MOV AL, TOTAL_SIGNED_IN
+    CBW
+    CMP SI, AX
+    JGE COURSE_DONE
+
+    ; Check course
+    MOV AL, COURSE_CODE[SI]
+    CMP AL, USER_COURSE
+    JNE NEXT_COURSE
+
+    ; Increment room counter
+    MOV AL, ROOM_NO[SI]     ; room number (1–10)
+    DEC AL                  ; convert to 0–9
+    MOV DI, AX
+    INC SIGNED_IN_ROOM[DI]
+    INC BX
+
+NEXT_COURSE:
+    INC SI
+    JMP COURSE_LOOP
+
+COURSE_DONE:
+    XOR SI, SI              ; room index
+
+PRINT_ROOM_SUMMARY:
+    MOV AL, SIGNED_IN_ROOM[SI]
+    CMP AL, 0
+    JE SKIP_ROOM
+
+    ; New line
+    MOV DL, 0Dh
+    MOV AH, 02h
+    INT 21h
+    MOV DL, 0Ah
+    INT 21h
+
+    ; Print "Room "
+    MOV DL, 'R'
+    MOV AH, 02h
+    INT 21h
+    MOV DL, 'o'
+    INT 21h
+    MOV DL, 'o'
+    INT 21h
+    MOV DL, 'm'
+    INT 21h
+    MOV DL, ' '
+    INT 21h
+
+    ; Room number
+MOV AX, SI        ; AX = SI (16-bit safe)
+INC AX            ; AX = SI + 1
+ADD AL, 30h       ; convert to ASCII (AL only)
+MOV DL, AL
+MOV AH, 02h
+INT 21h
+
+
+    MOV DL, ':'
+    INT 21h
+    MOV DL, ' '
+    INT 21h
+
+    ; Present count
+    MOV AL, SIGNED_IN_ROOM[SI]
+    AAM
+    MOV DL, AH
+    ADD DL, 30h
+    CMP DL, '0'
+    JE PRINT_ONES_ONLY
+    MOV AH, 02h
+    INT 21h
+
+PRINT_ONES_ONLY:
+    MOV DL, AL
+    ADD DL, 30h
+    MOV AH, 02h
+    INT 21h
+
+SKIP_ROOM:
+    INC SI
+    CMP SI, 10
+    JL PRINT_ROOM_SUMMARY
     
     LEA DX,CONFIRM_MSG
     MOV AH,09h
@@ -556,8 +685,203 @@ VIEW_COURSE:
 ;________Deleting part_______
 DELETE_ENTRY:
     ; Placeholder: Delete Wrong Entry logic
+
+LEA DX, PROMPT_ID
+    MOV AH, 09h
+    INT 21h
+    LEA DX, ID_BUFFER
+    MOV AH, 0Ah
+    INT 21h
+
+    LEA DX, PROMPT_COURSE
+    MOV AH, 09h
+    INT 21h
+    MOV AH, 01h
+    INT 21h
+    SUB AL, 30h
+    MOV USER_COURSE, AL
+
+    LEA DX, PROMPT_BATCH
+    MOV AH, 09h
+    INT 21h
+    LEA DX, BATCH_BUFFER
+    MOV AH, 0Ah
+    INT 21h
+
+    ; --- Convert input batch string to a single number ---
+    MOV AL, BATCH_BUFFER+2
+    SUB AL, 30h
+    MOV BL, 10
+    MUL BL
+    MOV CL, BATCH_BUFFER+3
+    SUB CL, 30h
+    ADD AL, CL         
+    MOV USER_BATCH, AL 
+
+    XOR SI, SI          ; Initialize search index to 0
+
+SEARCH_DEL:
+    MOV AL, TOTAL_SIGNED_IN
+    XOR AH, AH
+    CMP SI, AX
+    JGE NOT_FOUND_LBL   ; Changed name to avoid conflict
+
+    ; 1. Compare Course
+    MOV AL, [COURSE_CODE + SI]
+    CMP AL, USER_COURSE
+    JNE NEXT_DEL
+
+    ; 2. Compare Batch
+    MOV AL, [STUDENT_BATCH + SI]
+    CMP AL, USER_BATCH
+    JNE NEXT_DEL
+
+    ; 3. Compare ID (3 digits)
+    MOV AX, SI
+    MOV BL, 3
+    MUL BL
+    MOV DI, AX         
+
+    MOV AL, ID_BUFFER+2
+    CMP AL, STUDENT_ID[DI]
+    JNE NEXT_DEL
+    MOV AL, ID_BUFFER+3
+    CMP AL, STUDENT_ID[DI+1]
+    JNE NEXT_DEL
+    MOV AL, ID_BUFFER+4
+    CMP AL, STUDENT_ID[DI+2]
+    JNE NEXT_DEL
+
+    JMP FOUND_DEL_LBL
+
+NEXT_DEL:
+    INC SI
+    JMP SEARCH_DEL
+
+
+FOUND_DEL_LBL:
+
+; -------- SHOW COURSE --------
+CMP USER_COURSE, 1
+JE D_CSE241
+CMP USER_COURSE, 2
+JE D_CSE281
+CMP USER_COURSE, 3
+JE D_CSE364
+CMP USER_COURSE, 4
+JE D_EEE341
+CMP USER_COURSE, 5
+JE D_EEE381
+
+D_CSE241:
+    LEA DX, CSE241_STR
+    JMP PRINT_D_COURSE
+
+D_CSE281:
+    LEA DX, CSE281_STR
+    JMP PRINT_D_COURSE
+
+D_CSE364:
+    LEA DX, CSE364_STR
+    JMP PRINT_D_COURSE
+
+D_EEE341:
+    LEA DX, EEE341_STR
+    JMP PRINT_D_COURSE
+
+D_EEE381:
+    LEA DX, EEE381_STR
+    JMP PRINT_D_COURSE
+
+PRINT_D_COURSE:
+    MOV AH, 09h
+    INT 21h
+
+
+
+; -------- SHOW SECTION --------
+LEA DX, SECTION_LABEL
+MOV AH, 09h
+INT 21h
+
+MOV AL, SECTION_CODE[SI]
+ADD AL, 30h
+MOV DL, AL
+MOV AH, 02h
+INT 21h
+
+; -------- CONFIRM DELETE --------
+LEA DX, DELETE_CONFIRM_MSG
+MOV AH, 09h
+INT 21h
+
+MOV AH, 01h
+INT 21h
+SUB AL, 30h
+
+CMP AL, 1
+JE CANCEL_DELETE     ; YES ? stay
+
+CMP AL, 2
+JE DO_DELETE         ; NO ? delete
+
+JMP MAIN_MENU
+
+CANCEL_DELETE:
     LEA DX,CONFIRM_MSG
     MOV AH,09h
+    INT 21h
+    JMP MAIN_MENU
+
+DO_DELETE:
+    JMP SHIFT_LOOP
+
+    
+SHIFT_LOOP:
+    MOV AL, TOTAL_SIGNED_IN
+    DEC AL
+    XOR AH, AH
+    CMP SI, AX          
+    JGE DONE_DEL_LBL
+
+    ; Shift simple arrays
+    MOV AL, [COURSE_CODE + SI + 1]
+    MOV [COURSE_CODE + SI], AL
+    MOV AL, [ROOM_NO + SI + 1]
+    MOV [ROOM_NO + SI], AL
+    MOV AL, [STUDENT_BATCH + SI + 1]
+    MOV [STUDENT_BATCH + SI], AL
+
+    ; Shift 3-byte ID
+    PUSH SI
+    MOV AX, SI
+    MOV BL, 3
+    MUL BL
+    MOV BX, AX          ; Current offset
+    ADD AX, 3
+    MOV DI, AX          ; Next offset
+
+    MOV AL, [STUDENT_ID + DI]
+    MOV [STUDENT_ID + BX], AL
+    MOV AL, [STUDENT_ID + DI + 1]
+    MOV [STUDENT_ID + BX + 1], AL
+    MOV AL, [STUDENT_ID + DI + 2]
+    MOV [STUDENT_ID + BX + 2], AL
+    POP SI
+
+    INC SI
+    JMP SHIFT_LOOP
+
+DONE_DEL_LBL:
+    DEC TOTAL_SIGNED_IN
+    LEA DX, CONFIRM_MSG
+    MOV AH, 09h
+    INT 21h
+    JMP MAIN_MENU
+
+NOT_FOUND_LBL:
+    LEA DX, NOT_FOUND_MSG
+    MOV AH, 09h
     INT 21h
     JMP MAIN_MENU
 
